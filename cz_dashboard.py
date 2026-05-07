@@ -46,7 +46,10 @@ DOCS = ROOT / "docs"
 DATA_FILE = DOCS / "data.json"
 HTML_FILE = DOCS / "index.html"
 
-PORT = 8765
+# Default for local; Render injects PORT env var (typically 10000)
+PORT = int(os.environ.get("PORT", "8765"))
+# Bind publicly when running under Render (or any container that injects PORT)
+HOST = "0.0.0.0" if os.environ.get("PORT") or os.environ.get("RENDER") else "127.0.0.1"
 
 # Prague city + CZ phone prefix
 CZ_COUNTRY = "cz"
@@ -455,41 +458,63 @@ function renderDI(){
   }
 }
 
-function isLocalhost(){
-  const h = window.location.hostname;
-  return h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "";
-}
-
 async function doRefresh(){
   const btn = document.getElementById("refresh-btn");
-  if(isLocalhost() && REFRESH_CONFIG.local_endpoint){
+  const orig = btn.innerHTML;
+
+  // Always try the live /refresh endpoint first (works on Render and locally).
+  // If it returns 404 (e.g. plain GitHub Pages with no backend), fall back to
+  // opening the GitHub Actions workflow_dispatch UI.
+  if(REFRESH_CONFIG.local_endpoint){
     btn.disabled = true;
-    const orig = btn.innerHTML;
-    btn.innerHTML = "Refreshing… (~2-3 min)";
-    toast("Re-querying Databricks. This usually takes 2-3 minutes…");
+    btn.innerHTML = "Refreshing\u2026";
+    let elapsed = 0;
+    const tick = setInterval(()=>{
+      elapsed += 1;
+      btn.innerHTML = `Refreshing\u2026 ${elapsed}s`;
+    }, 1000);
+    toast("Re-querying Databricks. Usually 30\u201360 sec; up to 3 min on a cold cluster.", "info", 8000);
     try{
-      const res = await fetch(REFRESH_CONFIG.local_endpoint, {method:"POST"});
+      // 4 minute timeout - Databricks cluster cold-start can take ~3 min
+      const ctrl = new AbortController();
+      const tmo = setTimeout(()=>ctrl.abort(), 240000);
+      const res = await fetch(REFRESH_CONFIG.local_endpoint, {method:"POST", signal: ctrl.signal});
+      clearTimeout(tmo);
+      if(res.status === 404){
+        throw Object.assign(new Error("no backend"), {fallback: true});
+      }
       if(!res.ok) throw new Error("HTTP " + res.status);
-      toast("Refresh complete. Reloading…");
+      const body = await res.json().catch(()=> ({}));
+      if(body && body.ok === false){
+        throw new Error(body.error || "refresh failed");
+      }
+      clearInterval(tick);
+      toast("Refresh complete. Reloading\u2026");
       setTimeout(()=>location.reload(), 800);
+      return;
     }catch(e){
+      clearInterval(tick);
       btn.disabled = false;
       btn.innerHTML = orig;
-      toast("Refresh failed: " + e.message + ". Make sure cz_dashboard.py is still running.", "error");
+      if(e.fallback && REFRESH_CONFIG.actions_url){
+        window.open(REFRESH_CONFIG.actions_url, "_blank", "noopener");
+        toast(
+          `No live backend on this host. Opening GitHub Actions in a new tab \u2014 ` +
+          `click <strong>Run workflow \u2192 Run workflow</strong>, then reload here in ~3 min.`,
+          "info",
+          9000
+        );
+        return;
+      }
+      toast("Refresh failed: " + e.message, "error");
+      return;
     }
-    return;
   }
 
-  // GitHub Pages: open the workflow_dispatch UI in a new tab
-  const url = REFRESH_CONFIG.actions_url;
-  if(url){
-    window.open(url, "_blank", "noopener");
-    toast(
-      `Opening GitHub Actions in a new tab. Click <strong>Run workflow → Run workflow</strong> to refresh. ` +
-      `Then come back here and reload the page in ~3 minutes.`,
-      "info",
-      9000
-    );
+  // No refresh config at all
+  if(REFRESH_CONFIG.actions_url){
+    window.open(REFRESH_CONFIG.actions_url, "_blank", "noopener");
+    toast("Opening GitHub Actions in a new tab.", "info", 6000);
   } else {
     toast("No refresh endpoint configured. See README.md.", "error");
   }
@@ -636,20 +661,24 @@ def main():
         return
 
     Handler.refresh_config = refresh_config
-    httpd = ReusableServer(("127.0.0.1", PORT), Handler)
-    url = f"http://localhost:{PORT}/"
+    httpd = ReusableServer((HOST, PORT), Handler)
+    public_url = f"http://{HOST}:{PORT}/"
+    local_url = f"http://localhost:{PORT}/"
     print()
     print("=" * 70)
-    print(f"  Prague DI Dashboard running at  {url}")
-    print(f"  Static HTML written to          {HTML_FILE}")
-    print(f"  Cached data:                    {DATA_FILE}")
-    print(f"  Last refreshed:                 {data.get('last_refreshed')}")
+    print(f"  Prague DI Dashboard listening on {HOST}:{PORT}")
+    print(f"  Local URL:                       {local_url}")
+    if HOST == "0.0.0.0":
+        print(f"  Public bind:                     {public_url}")
+    print(f"  Static HTML written to           {HTML_FILE}")
+    print(f"  Cached data:                     {DATA_FILE}")
+    print(f"  Last refreshed:                  {data.get('last_refreshed')}")
     print("  Press Ctrl-C to stop.")
     print("=" * 70)
     print()
 
-    if not args.no_browser:
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    if not args.no_browser and HOST == "127.0.0.1":
+        threading.Timer(0.6, lambda: webbrowser.open(local_url)).start()
 
     try:
         httpd.serve_forever()

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: cz-prague-di-dashboard
+    runtime: python
+    plan: free
+    region: frankfurt        # closest to Prague + Bolt's eu-west infra
+    buildCommand: pip install -r requirements.txt
+    startCommand: python cz_dashboard.py --serve --no-browser
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: DATABRICKS_TOKEN
+        sync: false           # user pastes this in the Render dashboard
+      - key: GH_ACTIONS_URL
+        value: https://github.com/syedkhan-prog/cz-prague-di-dashboard/actions/workflows/refresh.yml
