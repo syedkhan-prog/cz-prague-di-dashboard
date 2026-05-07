@@ -4,9 +4,7 @@ Single-page DI overview for **Bolt Food, Prague (city_id 271)**.
 Splits delivered orders into 3 cohorts based on phone prefix + home_city, and
 shows Bolt-funded discount intensity (DI%) for previous week, last week, and MTD.
 
-> **Live dashboard (full, with working Refresh button):** https://cz-prague-di-dashboard.onrender.com/
->
-> **Static mirror (GitHub Pages, refresh opens Actions UI):** https://syedkhan-prog.github.io/cz-prague-di-dashboard/
+> **Live dashboard:** https://syedkhan-prog.github.io/cz-prague-di-dashboard/
 
 ## Cohorts
 
@@ -20,74 +18,55 @@ shows Bolt-funded discount intensity (DI%) for previous week, last week, and MTD
 DI% = `SUM(campaign_spend_bolt_eur) / SUM(order_gmv_eur)` on delivered orders
 in Prague (excludes provider co-fund).
 
-## Architecture
+## How refresh works (GitHub-native, no external hosting)
 
 ```
-                                                    +------------------+
-   anyone in browser ---> https://cz-prague-di-     |  Render web      |
-   clicks "Refresh Now"   dashboard.onrender.com -> |  service (free)  |
-                                                    |                  |
-                                                    |  cz_dashboard.py |
-                                                    |  --serve         |
-                                                    +--------+---------+
-                                                             | DATABRICKS_TOKEN
-                                                             v
-                                                       +-----------+
-                                                       | Databricks |
-                                                       +-----------+
-
-   GitHub Pages mirror (static, daily-refreshed by GH Actions cron):
-   https://syedkhan-prog.github.io/cz-prague-di-dashboard/
+                                     +--------------------+
+   GitHub Actions cron (every hour) -| run cz_dashboard.py|
+                                     | --build --refresh  |
+                                     +---------+----------+
+                                               | DATABRICKS_TOKEN secret
+                                               v
+                                     +-------------------+
+                                     | Databricks (PAT)  |
+                                     +-------------------+
+                                               |
+                                               v
+                                     git commit + push to /docs
+                                               |
+                                               v
+                                     +-------------------+
+                                     |  GitHub Pages CDN |
+                                     +-------------------+
+                                               ^
+                                               |
+                                       anyone in the world
+                                       opens the dashboard
 ```
 
-The "Refresh Now" button on the **Render** site re-queries Databricks and
-reloads the dashboard within ~10-30 seconds.
+- **GitHub Pages** serves the static dashboard (always-on, free, no sleeping).
+- **GitHub Actions** runs the Databricks query on a schedule and commits a fresh
+  `docs/index.html` + `docs/data.json` back to the repo. GitHub Pages auto-redeploys.
+- **No Render / no Cloudflare / no extra accounts.** Everything lives in the GitHub repo.
 
-The "Refresh Now" button on the **GitHub Pages** mirror has no backend, so it
-falls back to opening the GitHub Actions "Run workflow" page (3-min refresh).
+### Auto-refresh schedule
 
-## Deploy to Render (one-time setup, ~5 min)
+The workflow `refresh.yml` runs:
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/syedkhan-prog/cz-prague-di-dashboard)
+| When                                           | Frequency       |
+|------------------------------------------------|-----------------|
+| Mon-Fri **04:00-18:00 UTC** (06:00-20:00 Prague summer / 05:00-19:00 winter) | Every hour      |
+| Saturday + Sunday at **06:00 UTC**             | Once per day    |
+| Anyone clicks **Run workflow** in the Actions tab | On demand    |
 
-1. Click the button above. Sign in / sign up for Render (free, no credit card needed).
-2. Render reads `render.yaml` and shows the service settings. Leave them as-is.
-3. **Set the `DATABRICKS_TOKEN` env var** to your Databricks Personal Access Token
-   (the one that starts with `dapi...`). Render marks it `sync: false` so it
-   stays out of git.
-4. Click **Apply / Create**.
-5. First build takes ~3-5 min (installing pandas, etc.). Subsequent deploys are
-   ~30 seconds.
-6. Note the URL Render assigns you (in our case `https://cz-prague-di-dashboard.onrender.com/`).
+That's ~14 refreshes/business-day, so you should never see data more than an hour stale during work hours.
 
-### After the first deploy: prevent cold starts
+### "Refresh Now" button
 
-Render's free tier puts the service to sleep after 15 min of inactivity, AND
-the Databricks SQL cluster also auto-suspends. A cold-cluster refresh can
-take 2-4 minutes vs ~40 sec on a warm one. To prevent that, the repo
-includes a GitHub Actions workflow that pings `/health` every 10 min.
+Clicking it opens the [GitHub Actions Run-workflow page](https://github.com/syedkhan-prog/cz-prague-di-dashboard/actions/workflows/refresh.yml).
+Click **Run workflow -> Run workflow**, wait ~2 minutes for the action to finish + Pages to redeploy, then reload the dashboard.
 
-Already configured for this repo (`RENDER_URL` is set as a repo variable).
-For a fresh deploy, set it via:
-
-```bash
-gh variable set RENDER_URL --body 'https://YOUR-RENDER-URL.onrender.com'
-```
-
-(or in the GitHub UI: **Settings -> Secrets and variables -> Actions -> Variables -> New repository variable**, name `RENDER_URL`).
-
-The keep-alive workflow uses 0 GH Actions credits since this is a public repo.
-
-## How refresh works (3 paths)
-
-| Where you click Refresh                  | What happens                                                          | Latency  |
-|------------------------------------------|-----------------------------------------------------------------------|----------|
-| **cz-prague-di-dashboard.onrender.com**  | POST `/refresh` -> Render queries Databricks -> page reloads          | ~10-30 s |
-| **localhost** (`python cz_dashboard.py --serve`) | POST `/refresh` -> queries Databricks via your local OAuth -> reloads | ~10-30 s |
-| **syedkhan-prog.github.io** (static)     | Opens GitHub Actions UI, you click "Run workflow", wait, reload       | ~3 min   |
-
-The daily 06:00 UTC GitHub Action also runs unconditionally so the static
-mirror never goes more than 24 hours stale.
+The dashboard also tells you `Last refreshed: <UTC timestamp>` at the top so you know how stale the numbers are.
 
 ## Local development
 
@@ -107,12 +86,13 @@ python cz_dashboard.py --build --refresh --no-browser
 python cz_dashboard.py --serve --refresh --date 2026-04-26
 ```
 
-Auth is auto-detected:
-- env `DATABRICKS_TOKEN` set -> PAT (used by Render and GitHub Actions)
-- otherwise -> OAuth browser flow (used locally)
+When running locally, the **Refresh Now** button on the dashboard hits the
+local `/refresh` endpoint and re-queries Databricks immediately (~30-60 sec
+on a warm cluster).
 
-Bind: defaults to `127.0.0.1:8765` locally; switches to `0.0.0.0:$PORT`
-automatically when the `PORT` env var is set (Render injects this).
+Auth is auto-detected:
+- env `DATABRICKS_TOKEN` set -> PAT (used by GitHub Actions)
+- otherwise -> OAuth browser flow (used locally)
 
 ## Repo layout
 
@@ -121,13 +101,11 @@ automatically when the `PORT` env var is set (Render injects this).
 ├── cz_dashboard.py              # main: CLI + queries + server + HTML template
 ├── dbx.py                       # Databricks connection (auto-detects PAT vs OAuth)
 ├── requirements.txt
-├── render.yaml                  # Render Blueprint -> "Deploy to Render" button
 ├── docs/                        # served by GitHub Pages
-│   ├── index.html               # generated by --build
-│   └── data.json                # generated by --build
+│   ├── index.html               # generated by --build (committed by CI)
+│   └── data.json                # generated by --build (committed by CI)
 └── .github/workflows/
-    ├── refresh.yml              # daily DB query + commit fresh data to /docs
-    └── keepalive.yml            # ping Render /health every 10 min
+    └── refresh.yml              # hourly cron + manual Run-workflow button
 ```
 
 ## Source tables

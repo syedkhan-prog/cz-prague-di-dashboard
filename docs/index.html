@@ -222,14 +222,20 @@ function renderDI(){
   }
 }
 
+function hostHasLiveBackend(){
+  // GitHub Pages and any github.io domain are static-only -> no /refresh.
+  // Anywhere else (localhost, custom domains running our Python server)
+  // we assume the backend is live and try /refresh first.
+  const h = window.location.hostname;
+  if(h.endsWith(".github.io") || h === "github.io") return false;
+  return true;
+}
+
 async function doRefresh(){
   const btn = document.getElementById("refresh-btn");
   const orig = btn.innerHTML;
 
-  // Always try the live /refresh endpoint first (works on Render and locally).
-  // If it returns 404 (e.g. plain GitHub Pages with no backend), fall back to
-  // opening the GitHub Actions workflow_dispatch UI.
-  if(REFRESH_CONFIG.local_endpoint){
+  if(REFRESH_CONFIG.local_endpoint && hostHasLiveBackend()){
     btn.disabled = true;
     btn.innerHTML = "Refreshing\u2026";
     let elapsed = 0;
@@ -239,7 +245,6 @@ async function doRefresh(){
     }, 1000);
     toast("Re-querying Databricks. Usually 30\u201360 sec; up to 3 min on a cold cluster.", "info", 8000);
     try{
-      // 4 minute timeout - Databricks cluster cold-start can take ~3 min
       const ctrl = new AbortController();
       const tmo = setTimeout(()=>ctrl.abort(), 240000);
       const res = await fetch(REFRESH_CONFIG.local_endpoint, {method:"POST", signal: ctrl.signal});
@@ -260,25 +265,26 @@ async function doRefresh(){
       clearInterval(tick);
       btn.disabled = false;
       btn.innerHTML = orig;
-      if(e.fallback && REFRESH_CONFIG.actions_url){
-        window.open(REFRESH_CONFIG.actions_url, "_blank", "noopener");
-        toast(
-          `No live backend on this host. Opening GitHub Actions in a new tab \u2014 ` +
-          `click <strong>Run workflow \u2192 Run workflow</strong>, then reload here in ~3 min.`,
-          "info",
-          9000
-        );
+      if(e.fallback){
+        // fall through to GH Actions handler below
+      } else {
+        toast("Refresh failed: " + e.message, "error");
         return;
       }
-      toast("Refresh failed: " + e.message, "error");
-      return;
     }
   }
 
-  // No refresh config at all
+  // GitHub Pages path: data is auto-refreshed every hour by the
+  // refresh.yml workflow. The button kicks off an extra ad-hoc run.
   if(REFRESH_CONFIG.actions_url){
     window.open(REFRESH_CONFIG.actions_url, "_blank", "noopener");
-    toast("Opening GitHub Actions in a new tab.", "info", 6000);
+    toast(
+      `Data is auto-refreshed every hour during Prague work hours. ` +
+      `For an immediate refresh, click <strong>Run workflow \u2192 Run workflow</strong> ` +
+      `in the new tab, then reload this page in ~2 minutes.`,
+      "info",
+      10000
+    );
   } else {
     toast("No refresh endpoint configured. See README.md.", "error");
   }
