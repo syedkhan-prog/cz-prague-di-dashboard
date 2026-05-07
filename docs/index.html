@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Prague DI Dashboard - Tourist / Local / Expat</title>
+<style>
+:root{
+  --bg:#0b1220; --panel:#111a2e; --panel-2:#19243d; --border:#27314c;
+  --text:#e6ecff; --muted:#94a3b8;
+  --accent:#60a5fa; --accent-2:#7c3aed;
+  --local:#3b82f6; --expat:#f97316; --tourist:#22c55e;
+  --total:#fbbf24; --unknown:#6b7280;
+  --good:#10b981; --warn:#f59e0b; --bad:#ef4444;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;font-family:-apple-system,Segoe UI,Inter,sans-serif;background:var(--bg);color:var(--text);}
+header{
+  position:sticky;top:0;z-index:10;
+  background:linear-gradient(135deg,#0f172a,#1e1b4b);
+  border-bottom:1px solid var(--border);padding:18px 28px;
+  display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;
+}
+header h1{margin:0;font-size:22px;letter-spacing:.3px}
+header .meta{display:flex;align-items:center;gap:14px;color:var(--muted);font-size:13px;flex-wrap:wrap}
+button.refresh{
+  background:linear-gradient(90deg,#3b82f6,#7c3aed);color:#fff;border:0;
+  padding:9px 18px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px;
+  display:flex;align-items:center;gap:6px;
+  transition:transform .12s ease,box-shadow .12s ease;
+  box-shadow:0 4px 12px rgba(59,130,246,.25);
+}
+button.refresh:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(59,130,246,.35)}
+button.refresh:disabled{opacity:.6;cursor:wait}
+main{padding:24px 28px 80px;max-width:1400px;margin:0 auto}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.kpi .label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px}
+.kpi .value{font-size:22px;font-weight:700;margin-top:4px}
+.kpi .sub{font-size:12px;color:var(--muted);margin-top:2px}
+h2{margin:18px 0 10px;font-size:18px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px}
+.card-title{font-size:15px;font-weight:600;margin:0 0 4px;color:#cdd6ff}
+.card-sub{font-size:12px;color:var(--muted);margin:0 0 12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{
+  text-align:right;padding:10px 12px;background:var(--panel-2);border-bottom:1px solid var(--border);
+  font-weight:600;color:#cdd6ff;text-transform:uppercase;font-size:11px;letter-spacing:.5px;
+}
+thead th:first-child{text-align:left}
+tbody td{padding:9px 12px;border-bottom:1px solid var(--border);text-align:right;color:#dde6ff}
+tbody td:first-child{text-align:left;font-weight:500}
+tbody tr:hover{background:rgba(255,255,255,.03)}
+tbody tr.total td{background:rgba(251,191,36,.08);font-weight:700;color:var(--total)}
+.seg-pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.seg-local{background:rgba(59,130,246,.15);color:var(--local)}
+.seg-expat{background:rgba(249,115,22,.15);color:var(--expat)}
+.seg-tourist{background:rgba(34,197,94,.15);color:var(--tourist)}
+.seg-unknown{background:rgba(107,114,128,.18);color:#cbd5e1}
+.seg-total{background:rgba(251,191,36,.18);color:var(--total)}
+.muted{color:var(--muted)}
+.toast{
+  position:fixed;bottom:24px;right:24px;background:#1f2937;border:1px solid var(--border);
+  padding:14px 18px;border-radius:10px;color:var(--text);font-size:13px;
+  box-shadow:0 6px 18px rgba(0,0,0,.45);z-index:100;display:none;max-width:420px;
+}
+.toast.show{display:block}
+.toast.error{border-color:#ef4444;color:#fca5a5}
+.toast.info{border-color:#60a5fa;color:#bfdbfe}
+.toast a{color:#fff;text-decoration:underline;font-weight:600}
+code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:12px}
+.note{
+  background:rgba(96,165,250,.07);border-left:3px solid var(--accent);
+  padding:10px 14px;border-radius:6px;font-size:12.5px;color:#cbd5e1;margin-bottom:14px;
+}
+.callout{
+  background:rgba(34,197,94,.08);border-left:3px solid var(--good);
+  padding:10px 14px;border-radius:6px;font-size:13px;color:#bbf7d0;margin:8px 0 16px;
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Prague DI Dashboard <span class="muted" style="font-size:13px;font-weight:400;">- Tourist / Local / Expat</span></h1>
+    <div class="meta" style="margin-top:4px">
+      <span>As-of: <strong id="ref-date">-</strong></span>
+      <span class="muted">|</span>
+      <span>Last refreshed: <strong id="ts">-</strong></span>
+    </div>
+  </div>
+  <button class="refresh" id="refresh-btn" onclick="doRefresh()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.4L3 16"/><path d="M3 21v-5h5"/></svg>
+    Refresh Now
+  </button>
+</header>
+
+<main>
+  <div class="note">
+    <strong>Definitions:</strong>
+    <span class="seg-pill seg-local">Local</span> phone prefix <code>+420</code> ·
+    <span class="seg-pill seg-expat">Expat</span> non-CZ prefix &amp; <code>home_city_id = 271</code> (Prague) ·
+    <span class="seg-pill seg-tourist">Tourist</span> non-CZ prefix &amp; <code>home_city_id != 271</code> (or NULL) ·
+    <span class="seg-pill seg-unknown">Unknown</span> NULL phone.
+    DI% = Bolt-funded campaign spend / GMV (Bolt-only, excludes provider co-fund). Filtered to delivered orders in Prague (city_id 271).
+  </div>
+  <div class="callout" id="callout-wow"></div>
+  <div id="di-cards"></div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const DATA = {"last_refreshed": "2026-05-07 06:28:55 UTC", "reference_date": "2026-05-07", "city": {"id": 271, "name": "Prague", "country": "CZ"}, "phone_prefix": "420", "periods": [{"key": "prev_week", "label": "Previous week (Apr 20 - 26)", "short": "Previous week", "start": "2026-04-20", "end": "2026-04-26"}, {"key": "last_week", "label": "Last week (Apr 27 - May 3)", "short": "Last week", "start": "2026-04-27", "end": "2026-05-03"}, {"key": "mtd", "label": "Month-to-Date (May 1 - 6)", "short": "MTD", "start": "2026-05-01", "end": "2026-05-06"}], "di_breakdown": {"prev_week": {"label": "Previous week (Apr 20 - 26)", "short": "Previous week", "start": "2026-04-20", "end": "2026-04-26", "rows": [{"segment": "TOTAL_PRAGUE", "orders": 69360, "active_users": 43514, "gmv_eur": 1515143.0, "bolt_spend_eur": 180315.0, "aov_eur": 21.85, "di_pct": 11.9, "pct_of_bolt_spend": 100.0, "pct_of_gmv": 100.0}, {"segment": "expat", "orders": 5739, "active_users": 3397, "gmv_eur": 129929.0, "bolt_spend_eur": 11657.0, "aov_eur": 22.64, "di_pct": 8.97, "pct_of_bolt_spend": 6.46, "pct_of_gmv": 8.58}, {"segment": "local", "orders": 61985, "active_users": 38999, "gmv_eur": 1340692.0, "bolt_spend_eur": 166303.0, "aov_eur": 21.63, "di_pct": 12.4, "pct_of_bolt_spend": 92.23, "pct_of_gmv": 88.49}, {"segment": "tourist", "orders": 1634, "active_users": 1116, "gmv_eur": 44496.0, "bolt_spend_eur": 2355.0, "aov_eur": 27.23, "di_pct": 5.29, "pct_of_bolt_spend": 1.31, "pct_of_gmv": 2.94}, {"segment": "unknown", "orders": 2, "active_users": 2, "gmv_eur": 26.0, "bolt_spend_eur": 0.0, "aov_eur": 13.05, "di_pct": 0.0, "pct_of_bolt_spend": 0.0, "pct_of_gmv": 0.0}]}, "last_week": {"label": "Last week (Apr 27 - May 3)", "short": "Last week", "start": "2026-04-27", "end": "2026-05-03", "rows": [{"segment": "TOTAL_PRAGUE", "orders": 67594, "active_users": 42544, "gmv_eur": 1484657.0, "bolt_spend_eur": 184911.0, "aov_eur": 21.97, "di_pct": 12.45, "pct_of_bolt_spend": 100.0, "pct_of_gmv": 100.0}, {"segment": "expat", "orders": 5556, "active_users": 3279, "gmv_eur": 128406.0, "bolt_spend_eur": 12491.0, "aov_eur": 23.12, "di_pct": 9.73, "pct_of_bolt_spend": 6.76, "pct_of_gmv": 8.65}, {"segment": "local", "orders": 60430, "active_users": 38118, "gmv_eur": 1313247.0, "bolt_spend_eur": 170132.0, "aov_eur": 21.74, "di_pct": 12.96, "pct_of_bolt_spend": 92.01, "pct_of_gmv": 88.45}, {"segment": "tourist", "orders": 1608, "active_users": 1147, "gmv_eur": 43004.0, "bolt_spend_eur": 2287.0, "aov_eur": 26.76, "di_pct": 5.32, "pct_of_bolt_spend": 1.24, "pct_of_gmv": 2.9}]}, "mtd": {"label": "Month-to-Date (May 1 - 6)", "short": "MTD", "start": "2026-05-01", "end": "2026-05-06", "rows": [{"segment": "TOTAL_PRAGUE", "orders": 55336, "active_users": 36785, "gmv_eur": 1204347.0, "bolt_spend_eur": 142880.0, "aov_eur": 21.77, "di_pct": 11.86, "pct_of_bolt_spend": 100.0, "pct_of_gmv": 100.0}, {"segment": "expat", "orders": 4580, "active_users": 2860, "gmv_eur": 105439.0, "bolt_spend_eur": 9594.0, "aov_eur": 23.03, "di_pct": 9.1, "pct_of_bolt_spend": 6.71, "pct_of_gmv": 8.75}, {"segment": "local", "orders": 49394, "active_users": 32973, "gmv_eur": 1063184.0, "bolt_spend_eur": 131499.0, "aov_eur": 21.53, "di_pct": 12.37, "pct_of_bolt_spend": 92.03, "pct_of_gmv": 88.28}, {"segment": "tourist", "orders": 1362, "active_users": 952, "gmv_eur": 35724.0, "bolt_spend_eur": 1786.0, "aov_eur": 26.23, "di_pct": 5.0, "pct_of_bolt_spend": 1.25, "pct_of_gmv": 2.97}]}}};
+const REFRESH_CONFIG = {"local_endpoint": "/refresh", "actions_url": "https://github.com/syedkhan-prog/cz-prague-di-dashboard/actions/workflows/refresh.yml"};
+
+const segMeta = {
+  local:        {label:"Local",   cls:"seg-local"},
+  tourist:      {label:"Tourist", cls:"seg-tourist"},
+  expat:        {label:"Expat",   cls:"seg-expat"},
+  unknown:      {label:"Unknown", cls:"seg-unknown"},
+  unmapped:     {label:"Unmapped",cls:"seg-unknown"},
+  TOTAL_PRAGUE: {label:"TOTAL Prague", cls:"seg-total"},
+};
+const segOrder = ["TOTAL_PRAGUE","local","tourist","expat","unknown","unmapped"];
+
+function fmtInt(n){ if(n===null||n===undefined||isNaN(n)) return "-"; return Math.round(n).toLocaleString(); }
+function fmtEUR(n){ if(n===null||n===undefined||isNaN(n)) return "-"; return "EUR "+Math.round(n).toLocaleString(); }
+function fmtEUR2(n){ if(n===null||n===undefined||isNaN(n)) return "-"; return "EUR "+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtPct(n,d=2){ if(n===null||n===undefined||isNaN(n)) return "-"; return Number(n).toFixed(d)+"%"; }
+
+function toast(msg, kind="info", durationMs=5500){
+  const t = document.getElementById("toast");
+  t.innerHTML = msg;
+  t.className = "toast show " + kind;
+  if(durationMs > 0) setTimeout(()=>{ t.className = "toast"; }, durationMs);
+}
+
+function renderDI(){
+  const container = document.getElementById("di-cards");
+  container.innerHTML = "";
+
+  const co = document.getElementById("callout-wow");
+  const lw = DATA.di_breakdown.last_week;
+  const pw = DATA.di_breakdown.prev_week;
+  if(lw && pw){
+    const lt = lw.rows.find(r => r.segment === "TOTAL_PRAGUE");
+    const pt = pw.rows.find(r => r.segment === "TOTAL_PRAGUE");
+    if(lt && pt){
+      const dDi    = lt.di_pct          - pt.di_pct;
+      const dGmv   = pt.gmv_eur          ? (lt.gmv_eur          - pt.gmv_eur)          / pt.gmv_eur          * 100 : 0;
+      const dSpend = pt.bolt_spend_eur   ? (lt.bolt_spend_eur   - pt.bolt_spend_eur)   / pt.bolt_spend_eur   * 100 : 0;
+      const dOrd   = pt.orders           ? (lt.orders           - pt.orders)           / pt.orders           * 100 : 0;
+      const arr = (n) => n > 0.005 ? "▲" : n < -0.005 ? "▼" : "—";
+      const sgn = (n, d=1) => (n > 0 ? "+" : "") + Number(n).toFixed(d);
+      const lwRange = `${lw.start.slice(5)} → ${lw.end.slice(5)}`;
+      const pwRange = `${pw.start.slice(5)} → ${pw.end.slice(5)}`;
+      co.innerHTML =
+        `<strong>WoW change</strong> · last week (${lwRange}) vs previous week (${pwRange}): ` +
+        `Orders ${arr(dOrd)} <strong>${sgn(dOrd)}%</strong> · ` +
+        `GMV ${arr(dGmv)} <strong>${sgn(dGmv)}%</strong> · ` +
+        `Bolt spend ${arr(dSpend)} <strong>${sgn(dSpend)}%</strong> · ` +
+        `DI ${arr(dDi)} <strong>${sgn(dDi, 2)} pp</strong>`;
+      co.style.display = "";
+    } else {
+      co.style.display = "none";
+    }
+  } else {
+    co.style.display = "none";
+  }
+
+  for(const period of DATA.periods){
+    const block = DATA.di_breakdown[period.key];
+    if(!block) continue;
+    const total = block.rows.find(r => r.segment === "TOTAL_PRAGUE") || {};
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="card-title">${block.label}</div>
+      <div class="card-sub">${block.start} → ${block.end} · Prague delivered orders</div>
+      <div class="kpi-row" style="margin-bottom:14px">
+        <div class="kpi"><div class="label">Orders</div><div class="value">${fmtInt(total.orders)}</div></div>
+        <div class="kpi"><div class="label">GMV</div><div class="value">${fmtEUR(total.gmv_eur)}</div></div>
+        <div class="kpi"><div class="label">Bolt spend</div><div class="value">${fmtEUR(total.bolt_spend_eur)}</div></div>
+        <div class="kpi"><div class="label">Blended DI%</div><div class="value">${fmtPct(total.di_pct)}</div></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Segment</th>
+            <th>Orders</th>
+            <th>Active users</th>
+            <th>GMV</th>
+            <th>% GMV</th>
+            <th>Bolt spend</th>
+            <th>% spend</th>
+            <th>AOV</th>
+            <th>DI%</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${[...block.rows]
+            .sort((a,b)=> segOrder.indexOf(a.segment) - segOrder.indexOf(b.segment))
+            .map(r=>{
+              const m = segMeta[r.segment] || {label:r.segment, cls:"seg-unknown"};
+              const isTotal = r.segment === "TOTAL_PRAGUE";
+              return `<tr class="${isTotal?'total':''}">
+                <td><span class="seg-pill ${m.cls}">${m.label}</span></td>
+                <td>${fmtInt(r.orders)}</td>
+                <td>${fmtInt(r.active_users)}</td>
+                <td>${fmtEUR(r.gmv_eur)}</td>
+                <td>${fmtPct(r.pct_of_gmv,1)}</td>
+                <td>${fmtEUR(r.bolt_spend_eur)}</td>
+                <td>${fmtPct(r.pct_of_bolt_spend,1)}</td>
+                <td>${fmtEUR2(r.aov_eur)}</td>
+                <td><strong>${fmtPct(r.di_pct)}</strong></td>
+              </tr>`;
+            }).join("")}
+        </tbody>
+      </table>
+    `;
+    container.appendChild(card);
+  }
+}
+
+function isLocalhost(){
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "";
+}
+
+async function doRefresh(){
+  const btn = document.getElementById("refresh-btn");
+  if(isLocalhost() && REFRESH_CONFIG.local_endpoint){
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = "Refreshing… (~2-3 min)";
+    toast("Re-querying Databricks. This usually takes 2-3 minutes…");
+    try{
+      const res = await fetch(REFRESH_CONFIG.local_endpoint, {method:"POST"});
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      toast("Refresh complete. Reloading…");
+      setTimeout(()=>location.reload(), 800);
+    }catch(e){
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      toast("Refresh failed: " + e.message + ". Make sure cz_dashboard.py is still running.", "error");
+    }
+    return;
+  }
+
+  // GitHub Pages: open the workflow_dispatch UI in a new tab
+  const url = REFRESH_CONFIG.actions_url;
+  if(url){
+    window.open(url, "_blank", "noopener");
+    toast(
+      `Opening GitHub Actions in a new tab. Click <strong>Run workflow → Run workflow</strong> to refresh. ` +
+      `Then come back here and reload the page in ~3 minutes.`,
+      "info",
+      9000
+    );
+  } else {
+    toast("No refresh endpoint configured. See README.md.", "error");
+  }
+}
+
+function renderAll(){
+  document.getElementById("ts").textContent = DATA.last_refreshed || "(unknown)";
+  document.getElementById("ref-date").textContent = DATA.reference_date || "(unknown)";
+  renderDI();
+}
+
+renderAll();
+</script>
+</body>
+</html>
