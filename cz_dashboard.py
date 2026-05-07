@@ -151,38 +151,90 @@ user_seg AS (
 )"""
 
 
-def fetch_di_breakdown(dbx, start, end):
+def fetch_all_di_breakdowns(dbx, periods):
+    """Fetch DI breakdowns for all periods in a SINGLE Databricks round-trip.
+
+    Old version ran one query per period (3 queries -> 3 cluster round-trips).
+    Each round-trip pays Spark scheduling + connection overhead. Combining
+    them with a UNION ALL on a single CTE-scanned table means just one
+    plan + one execution (~2x faster on a warm cluster, much faster cold).
+    """
+    # Compute the overall date envelope so we can do a single table scan
+    starts = [p["start"] for p in periods]
+    ends = [p["end"] for p in periods]
+    min_start = min(starts)
+    max_end = max(ends)
+
+    period_unions = "\n        UNION ALL\n".join(
+        f"        SELECT '{p['key']}' AS period_key, order_id, user_id, "
+        f"order_gmv_eur, campaign_spend_bolt_eur "
+        f"FROM relevant_orders "
+        f"WHERE order_created_date BETWEEN '{p['start']}' AND '{p['end']}'"
+        for p in periods
+    )
+
     q = f"""
-    WITH {USER_SEG_CTE}
+    WITH {USER_SEG_CTE},
+    relevant_orders AS (
+        SELECT order_id, user_id, order_gmv_eur, campaign_spend_bolt_eur, order_created_date
+        FROM ng_delivery_spark.dim_order_delivery
+        WHERE country_code = '{CZ_COUNTRY}'
+          AND city_id = {PRAGUE_CITY_ID}
+          AND order_state = 'delivered'
+          AND order_created_date BETWEEN '{min_start}' AND '{max_end}'
+    ),
+    period_orders AS (
+{period_unions}
+    )
     SELECT
+        p.period_key,
         COALESCE(s.segment, 'unmapped') AS segment,
-        COUNT(DISTINCT d.order_id)              AS orders,
-        COUNT(DISTINCT d.user_id)               AS active_users,
-        ROUND(SUM(d.order_gmv_eur), 0)          AS gmv_eur,
-        ROUND(SUM(d.campaign_spend_bolt_eur),0) AS bolt_spend_eur,
-        ROUND(AVG(d.order_gmv_eur), 2)          AS aov_eur,
-        ROUND(SUM(d.campaign_spend_bolt_eur)*100.0/NULLIF(SUM(d.order_gmv_eur),0), 2) AS di_pct
-    FROM ng_delivery_spark.dim_order_delivery d
-    LEFT JOIN user_seg s ON d.user_id = s.user_id
-    WHERE d.country_code = '{CZ_COUNTRY}'
-      AND d.city_id = {PRAGUE_CITY_ID}
-      AND d.order_state = 'delivered'
-      AND d.order_created_date BETWEEN '{start}' AND '{end}'
-    GROUP BY ROLLUP(COALESCE(s.segment, 'unmapped'))
-    ORDER BY segment NULLS FIRST
+        COUNT(DISTINCT p.order_id)               AS orders,
+        COUNT(DISTINCT p.user_id)                AS active_users,
+        ROUND(SUM(p.order_gmv_eur), 0)           AS gmv_eur,
+        ROUND(SUM(p.campaign_spend_bolt_eur), 0) AS bolt_spend_eur,
+        ROUND(AVG(p.order_gmv_eur), 2)           AS aov_eur,
+        ROUND(SUM(p.campaign_spend_bolt_eur)*100.0/NULLIF(SUM(p.order_gmv_eur),0), 2) AS di_pct
+    FROM period_orders p
+    LEFT JOIN user_seg s ON p.user_id = s.user_id
+    GROUP BY GROUPING SETS (
+        (p.period_key, COALESCE(s.segment, 'unmapped')),
+        (p.period_key)
+    )
+    ORDER BY p.period_key, segment NULLS FIRST
     """
     df = dbx.query(q)
-    df["segment"] = df["segment"].fillna("TOTAL_PRAGUE")
+
+    # Coerce types once for the whole dataframe
     for col in ["gmv_eur", "bolt_spend_eur", "aov_eur", "di_pct"]:
         df[col] = df[col].astype(float)
     df["orders"] = df["orders"].astype(int)
     df["active_users"] = df["active_users"].astype(int)
+    df["segment"] = df["segment"].fillna("TOTAL_PRAGUE")
 
-    total_bolt = float(df.loc[df["segment"] == "TOTAL_PRAGUE", "bolt_spend_eur"].iloc[0]) or 1.0
-    total_gmv = float(df.loc[df["segment"] == "TOTAL_PRAGUE", "gmv_eur"].iloc[0]) or 1.0
-    df["pct_of_bolt_spend"] = (df["bolt_spend_eur"] / total_bolt * 100).round(2)
-    df["pct_of_gmv"] = (df["gmv_eur"] / total_gmv * 100).round(2)
-    return _df_records(df)
+    out = {}
+    for p in periods:
+        sub = df[df["period_key"] == p["key"]].copy()
+        if sub.empty:
+            out[p["key"]] = {
+                "label": p["label"], "short": p["short"],
+                "start": p["start"], "end": p["end"], "rows": [],
+            }
+            continue
+
+        total_row = sub[sub["segment"] == "TOTAL_PRAGUE"]
+        total_bolt = float(total_row["bolt_spend_eur"].iloc[0]) if not total_row.empty else 1.0
+        total_gmv = float(total_row["gmv_eur"].iloc[0]) if not total_row.empty else 1.0
+        sub["pct_of_bolt_spend"] = (sub["bolt_spend_eur"] / (total_bolt or 1.0) * 100).round(2)
+        sub["pct_of_gmv"] = (sub["gmv_eur"] / (total_gmv or 1.0) * 100).round(2)
+        sub = sub.drop(columns=["period_key"])
+
+        out[p["key"]] = {
+            "label": p["label"], "short": p["short"],
+            "start": p["start"], "end": p["end"],
+            "rows": _df_records(sub),
+        }
+    return out
 
 
 def run_all_queries(today=None):
@@ -196,16 +248,12 @@ def run_all_queries(today=None):
     dbx = DBX()
     print(f"[refresh]   auth mode: {dbx.auth_mode}", flush=True)
 
-    di = {}
-    for p in periods:
-        print(f"[refresh] DI breakdown - {p['short']} ({p['start']} -> {p['end']})", flush=True)
-        di[p["key"]] = {
-            "label": p["label"],
-            "short": p["short"],
-            "start": p["start"],
-            "end": p["end"],
-            "rows": fetch_di_breakdown(dbx, p["start"], p["end"]),
-        }
+    print(
+        f"[refresh] DI breakdown - all 3 periods in one query "
+        f"({periods[0]['start']} -> {periods[-1]['end']})",
+        flush=True,
+    )
+    di = fetch_all_di_breakdowns(dbx, periods)
 
     dbx.close()
     print("[refresh] done.", flush=True)

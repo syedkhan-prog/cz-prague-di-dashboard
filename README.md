@@ -6,7 +6,7 @@ shows Bolt-funded discount intensity (DI%) for previous week, last week, and MTD
 
 > **Live dashboard (full, with working Refresh button):** https://cz-prague-di-dashboard.onrender.com/
 >
-> **Static fallback (GitHub Pages, refresh opens Actions UI):** https://syedkhan-prog.github.io/cz-prague-di-dashboard/
+> **Static mirror (GitHub Pages, refresh opens Actions UI):** https://syedkhan-prog.github.io/cz-prague-di-dashboard/
 
 ## Cohorts
 
@@ -58,14 +58,17 @@ falls back to opening the GitHub Actions "Run workflow" page (3-min refresh).
 4. Click **Apply / Create**.
 5. First build takes ~3-5 min (installing pandas, etc.). Subsequent deploys are
    ~30 seconds.
-6. Note the URL Render assigns you (e.g.
-   `https://cz-prague-di-dashboard-XXXX.onrender.com/`).
+6. Note the URL Render assigns you (in our case `https://cz-prague-di-dashboard.onrender.com/`).
 
 ### After the first deploy: prevent cold starts
 
-Render's free tier puts the service to sleep after 15 min of inactivity. To
-prevent that, the repo includes a GitHub Actions workflow that pings
-`/health` every 10 min. Tell it your Render URL:
+Render's free tier puts the service to sleep after 15 min of inactivity, AND
+the Databricks SQL cluster also auto-suspends. A cold-cluster refresh can
+take 2-4 minutes vs ~40 sec on a warm one. To prevent that, the repo
+includes a GitHub Actions workflow that pings `/health` every 10 min.
+
+Already configured for this repo (`RENDER_URL` is set as a repo variable).
+For a fresh deploy, set it via:
 
 ```bash
 gh variable set RENDER_URL --body 'https://YOUR-RENDER-URL.onrender.com'
