@@ -147,7 +147,7 @@ user_seg AS (
             WHEN home_city_id = {PRAGUE_CITY_ID} THEN 'expat'
             ELSE 'tourist'
         END AS segment
-    FROM ng_public_spark.user_user
+    FROM main.ng_public.user_user
 )"""
 
 
@@ -177,7 +177,7 @@ def fetch_all_di_breakdowns(dbx, periods):
     WITH {USER_SEG_CTE},
     relevant_orders AS (
         SELECT order_id, user_id, order_gmv_eur, campaign_spend_bolt_eur, order_created_date
-        FROM ng_delivery_spark.dim_order_delivery
+        FROM main.ng_delivery.dim_order_delivery
         WHERE country_code = '{CZ_COUNTRY}'
           AND city_id = {PRAGUE_CITY_ID}
           AND order_state = 'delivered'

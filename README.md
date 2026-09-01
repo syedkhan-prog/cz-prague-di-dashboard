@@ -110,5 +110,5 @@ Auth is auto-detected:
 
 ## Source tables
 
-- `ng_delivery_spark.dim_order_delivery` - order facts (`country_code='cz'`, `city_id=271`, `order_state='delivered'`)
-- `ng_public_spark.user_user` - user lookup for `phone_anonymized` + `home_city_id`
+- `main.ng_delivery.dim_order_delivery` - order facts (`country_code='cz'`, `city_id=271`, `order_state='delivered'`)
+- `main.ng_public.user_user` - user lookup for `phone_anonymized` + `home_city_id`

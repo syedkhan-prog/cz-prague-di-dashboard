@@ -13,7 +13,9 @@ from databricks import sql
 import pandas as pd
 
 DEFAULT_HOST = "bolt-incentives.cloud.databricks.com"
-DEFAULT_HTTP_PATH = "sql/protocolv1/o/2472566184436351/0221-081903-9ag4bh69"
+# Unity Catalog cluster "Shared Growth Analytics all purpose".
+# The old Glue cluster 0221-081903-9ag4bh69 rejects autostart and cannot read UC tables.
+DEFAULT_HTTP_PATH = "sql/protocolv1/o/2472566184436351/0505-112942-d3yviznw"
 
 
 class DBX:
